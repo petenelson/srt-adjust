@@ -1,0 +1,209 @@
+#!/usr/bin/env php
+<?php
+
+namespace SRTAdjust;
+
+/**
+ * Main entrypoint.
+ *
+ * @param array $argv The command-line args.
+ * @return int
+ */
+function main( $argv ) {
+
+	// Make sure all the command-line args are passed.
+	if ( count( $argv ) < 3 ) {
+		help();
+		return 1;
+	}
+
+	$args = [
+		'filename' => trim( $argv[1] ),
+		'offset'   => trim( $argv[2] ),
+	];
+
+	// Make sure we can process the offset.
+	$re = '/^[\+\-]{1}[\d]*(ms)?$/m';
+	preg_match( $re, $args['offset'], $matches );
+
+	if ( empty( $matches ) ) {
+		help();
+		return 1;
+	}
+
+	if ( ! is_readable( $args['filename'] ) ) {
+		line( sprintf( "File %s is not readable.", $args['filename'] ) );
+		return 1;
+	}
+
+	// Are we moving the file forward or back?
+	$args['forward'] = 0 === stripos( $args['offset'], '+' );
+
+	// Strip off what we don't need.
+	$args['offset']  = (int) str_replace( [ '+', '-', 'ms' ], '', $args['offset'] );
+
+	// Make sure we can load the file.
+	$contents = file_get_contents( $args['filename'] );
+
+	if ( empty( $contents ) ) {
+		line( sprintf( "File %s is empty.", $args['filename'] ) );
+		return 1;
+	}
+
+	// Stick this in an array.
+	$lines = file( $args['filename'], FILE_IGNORE_NEW_LINES );
+
+	if ( empty( $lines ) ) {
+		line( sprintf( "File %s is empty.", $args['filename'] ) );
+		return 1;
+	}
+
+	$count          = count( $lines );
+	$subtitle_count = 0;
+	$separator      = ' --> ';
+
+	line( sprintf( "Processing %s", $args['filename'] ) );
+
+	if ( count( $lines ) > 3 ) {
+		line( 'Original sample follows:' );
+
+		line( $lines[0] );
+		line( $lines[1] );
+		line( $lines[2] );
+		line( $lines[3] );
+		line( '' );
+	}
+
+	line(
+		sprintf(
+			"%s %d milliseconds to each subtitle.",
+			$args['forward'] ? 'Adding' : 'Subtracting',
+			$args['offset']
+		)
+	);
+
+	// Get a count.
+	foreach ( array_keys( $lines ) as $key ) {
+		$line = $lines[ $key ];
+		if ( false !== stripos( $line, $separator ) ) {
+			$subtitle_count++;
+		}
+	}
+
+	// Ready to start.
+	line( sprintf( "%d subtitles to process", $subtitle_count ) );
+
+	foreach ( array_keys( $lines ) as $key ) {
+		$line = $lines[ $key ];
+		if ( false !== stripos( $line, $separator ) ) {
+
+			$times = explode( $separator, $line );
+			$times = array_map( 'trim', $times );
+
+			$times[0] = adjust_time( $times[0], $args['forward'], $args['offset'] );
+			$times[1] = adjust_time( $times[1], $args['forward'], $args['offset'] );
+
+			$lines[ $key ] = $times[0] . $separator . $times[1];
+		}
+	}
+
+	if ( count( $lines ) > 3 ) {
+		line( '' );
+		line( 'Updated sample follows:' );
+		line( $lines[0] );
+		line( $lines[1] );
+		line( $lines[2] );
+		line( $lines[3] );
+		line( '' );
+	}
+
+	$content = implode( PHP_EOL, $lines );
+
+	$output_file = 'adjusted ' . $args['filename'];
+
+	file_put_contents( $output_file, $content );
+
+	line( sprintf( 'Updated file created: %s', $output_file ) );
+
+	return 0;
+}
+
+/**
+ * Adjust the time of HH:MM:SS,V forwards or backwards.
+ *
+ * @param  string $timecode The time code.
+ * @param  bool   $forward  Moving forward?
+ * @param  int    $amount   Milliseconds to adjust.
+ * @return string
+ */
+function adjust_time( $timecode, $forward, $amount ) {
+
+	$format = 'H:i:s,v';
+
+	$date = \DateTime::createFromFormat( $format, $timecode );
+	if ( ! $date ) {
+		return $timecode;
+	}
+
+	$date->modify( ( $forward ? '+ ' : '- ' ) . $amount . ' milliseconds' );
+
+	return $date->format( $format );
+}
+
+/**
+ * Shows the help.
+ *
+ * @return void
+ */
+function help() {
+	line( 'Please pass the .srt filename along with the adjustment in milliseconds' );
+	line( 'Example: ./srt-adjust "Aliens (1986).en.srt" +500' );
+	line( 'Example: ./srt-adjust "Aliens (1986).en.srt" -250ms' );
+}
+
+/**
+ * Print a line to the terminal.
+ *
+ * @param  string $message The message.
+ * @return void
+ */
+function line( $message ) {
+	echo $message . PHP_EOL;
+}
+
+/**
+ * Merges user defined arguments into defaults array. Borrowed from WordPress.
+ *
+ * @param string|array|object $args     Value to merge with $defaults.
+ * @param array               $defaults Optional. Array that serves as the defaults.
+ *                                      Default empty array.
+ * @return array Merged user defined values with defaults.
+ */
+function wp_parse_args( $args, $defaults = array() ) {
+	if ( is_object( $args ) ) {
+		$parsed_args = get_object_vars( $args );
+	} elseif ( is_array( $args ) ) {
+		$parsed_args =& $args;
+	} else {
+		wp_parse_str( $args, $parsed_args );
+	}
+
+	if ( is_array( $defaults ) && $defaults ) {
+		return array_merge( $defaults, $parsed_args );
+	}
+	return $parsed_args;
+}
+
+/**
+ * Parses a string into variables to be stored in an array. Borrowed from WordPress.
+ *
+ * @param string $input_string The string to be parsed.
+ * @param array  $result       Variables will be stored in this array.
+ */
+function wp_parse_str( $input_string, &$result ) {
+	parse_str( (string) $input_string, $result );
+	return $result;
+}
+
+
+return main( $argv );
